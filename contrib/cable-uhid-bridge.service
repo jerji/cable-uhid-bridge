@@ -9,7 +9,34 @@ Type=simple
 ExecStart=%h/.local/bin/cable-uhid-bridge
 Restart=on-failure
 RestartSec=3s
-Environment=RUST_LOG=info
+
+# Default to WARN: at INFO the caBLE layer logs request metadata
+# (rpId, clientDataHash, credential IDs). Opt in explicitly if debugging:
+#   systemctl --user edit cable-uhid-bridge
+Environment=RUST_LOG=warn
+
+# Auto-cancel a QR prompt that is never answered (seconds).
+Environment=CABLE_QR_TIMEOUT=90
+
+# --- Hardening -------------------------------------------------------------
+# This is a user service: it never runs as root, but these limits shrink the
+# impact of a compromise of the daemon itself.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+# Needs: AF_UNIX (D-Bus/BlueZ), AF_INET/AF_INET6 (WSS relay),
+# AF_BLUETOOTH (BLE proximity), AF_NETLINK (route lookup).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_BLUETOOTH AF_NETLINK
+# Deliberately NOT set: PrivateDevices (would hide /dev/uhid) and
+# MemoryDenyWriteExecute (breaks Mesa's software renderer used by the QR UI).
 
 [Install]
 WantedBy=graphical-session.target

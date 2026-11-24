@@ -122,10 +122,18 @@ impl<T: std::io::Read + std::io::Write> CtapHid<T> {
             Packet::Continuation(cont) => {
                 let cid = u32::from(cont.channel);
                 if let Some(payload) = self.payload_stack.get_mut(&cid) {
-                    if cont.sequence != payload.next_expected_sequence {
+                    // CTAPHID continuation sequence is a 7-bit counter that wraps
+                    // at 0x7F. A zero-length continuation packet is malformed and
+                    // must be rejected without advancing the counter, otherwise a
+                    // single empty packet desynchronises the whole channel.
+                    let expected = payload.next_expected_sequence & 0x7F;
+                    if cont.sequence != expected || cont.data.is_empty() {
                         error!(
-                            "CTAPHID sequence mismatch on CID {:08x}: got {}, expected {}",
-                            cid, cont.sequence, payload.next_expected_sequence
+                            "CTAPHID sequence mismatch on CID {:08x}: got {}, expected {} ({} bytes)",
+                            cid,
+                            cont.sequence,
+                            expected,
+                            cont.data.len()
                         );
                         self.payload_stack.remove(&cid);
                         self.send_error(cont.channel, DeviceError::InvalidSequence)?;
@@ -135,7 +143,8 @@ impl<T: std::io::Read + std::io::Write> CtapHid<T> {
                     let remaining = payload.total_len.saturating_sub(payload.data.len());
                     let to_copy = cont.data.len().min(remaining);
                     payload.data.extend_from_slice(&cont.data[..to_copy]);
-                    payload.next_expected_sequence += 1;
+                    payload.next_expected_sequence =
+                        payload.next_expected_sequence.wrapping_add(1) & 0x7F;
 
                     if payload.data.len() >= payload.total_len {
                         let completed = self.payload_stack.remove(&cid).unwrap();

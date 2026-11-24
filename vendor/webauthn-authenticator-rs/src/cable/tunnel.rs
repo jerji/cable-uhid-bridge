@@ -505,11 +505,13 @@ impl Token for Tunnel {
     where
         U: UiCallback,
     {
-        info!(
-            "caBLE tunnel: transmitting raw CTAP command (len={}, protocol_version={}): hex={}",
+        // Do not log the CTAP payload: it contains the rpId, clientDataHash and
+        // credential IDs. Redacted to length + command byte only, at debug level.
+        debug!(
+            "caBLE tunnel: transmitting raw CTAP command (len={}, cmd=0x{:02x}, protocol_version={})",
             cbor.len(),
+            cbor.first().copied().unwrap_or(0),
             self.protocol_version,
-            hex::encode(cbor)
         );
         let f = CableFrame {
             protocol_version: self.protocol_version,

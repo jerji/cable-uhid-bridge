@@ -125,13 +125,18 @@ impl UiCallback for BridgeUi {
         };
 
         // Also render text QR in terminal for logs/headless debugging
-        if let Ok(qr) = qrcode::QrCode::new(&url) {
-            let code = qr
-                .render::<qrcode::render::unicode::Dense1x2>()
-                .dark_color(qrcode::render::unicode::Dense1x2::Light)
-                .light_color(qrcode::render::unicode::Dense1x2::Dark)
-                .build();
-            println!("\n{code}\n");
+        // Optional terminal QR render for headless debugging. Off by default:
+        // stdout of a user service goes to journald, and the QR URL is a live
+        // session handle that must not be persisted in logs.
+        if std::env::var("CABLE_SHOW_TERMINAL_QR").ok().as_deref() == Some("1") {
+            if let Ok(qr) = qrcode::QrCode::new(&url) {
+                let code = qr
+                    .render::<qrcode::render::unicode::Dense1x2>()
+                    .dark_color(qrcode::render::unicode::Dense1x2::Light)
+                    .light_color(qrcode::render::unicode::Dense1x2::Dark)
+                    .build();
+                println!("\n{code}\n");
+            }
         }
 
         // Spawn GUI window
@@ -162,8 +167,10 @@ impl UiCallback for BridgeUi {
             cmd.arg("--ui")
                 .arg("--rp")
                 .arg(&self.rp_id)
-                .arg("--url")
-                .arg(&url)
+                // The caBLE QR URL carries the session handle. Pass it through
+                // the environment, never argv, so it cannot be read from
+                // /proc/<pid>/cmdline or `ps aux` by other processes.
+                .env("CABLE_QR_URL", &url)
                 .arg("--mode")
                 .arg(mode)
                 .stdin(Stdio::piped())

@@ -20,6 +20,35 @@ If a physical USB security key (such as a YubiKey) is plugged in at the same tim
 
 Tested with iOS (iCloud Keychain / Face ID) and Android (Google Password Manager) on GitHub, Google Accounts, and WebAuthn.io.
 
+## Hardening fork (`jerji/cable-uhid-bridge`)
+
+This fork keeps **exactly one commit** on top of upstream `main` at all times.
+`scripts/sync-upstream.sh` enforces it: it fetches upstream, rebases this commit
+on top, refuses to push if the distance is not one commit, then force-pushes
+`main` and `hardening`. Run `./scripts/sync-upstream.sh --check` to see the
+distance without changing anything.
+
+This fork applies the fixes from an independent security audit. Behaviour is
+unchanged unless noted.
+
+| Area | Change |
+|---|---|
+| Log privacy | Daemon defaults to `RUST_LOG=warn`. The raw CTAP command hex dump (rpId, clientDataHash, credential IDs) is gone; only length + command byte at `debug`. Credential IDs / rpId no longer written to stdout (journald). |
+| QR session handle | The `FIDO:/...` URL is passed to the UI child through `CABLE_QR_URL` instead of argv, so it no longer leaks via `ps aux` / `/proc/*/cmdline`. Terminal QR render is opt-in (`CABLE_SHOW_TERMINAL_QR=1`) because stdout is journald. |
+| Prompt lifetime | A QR prompt auto-cancels after `CABLE_QR_TIMEOUT` seconds (default 90), so a hostile local process cannot leave a prompt on screen forever. |
+| Framing bug | Empty continuation packets are rejected before the sequence counter advances, and the sequence counter is correctly 7-bit (wraps at `0x7F`) as the spec requires. A single empty packet could previously desync a channel. |
+| Service hardening | The user unit sets `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `RestrictAddressFamilies`, and friends. See the unit for the two directives deliberately left off. |
+| Device access | udev rule keeps `uaccess` (required for the browser's user) and documents why a group cannot restrict further. `contrib/70-uhid-strict.rules` is provided for multi-user systems that want group-only access. |
+
+### Known limitation (not fixable here)
+
+The daemon emulates a USB token, so it cannot know which browser origin asked
+for a request. Any process that can open the virtual HID device can ask for an
+assertion against an arbitrary `rpId`; the phone's user-verification prompt
+(which shows the domain) plus BLE proximity is the only consent boundary. A
+physical YubiKey has the same property on Linux. Do not treat this as a
+replacement for OS-level origin mediation.
+
 ## Installation
 
 ### Arch Linux

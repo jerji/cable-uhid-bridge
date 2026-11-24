@@ -1,3 +1,9 @@
 # /etc/udev/rules.d/70-uhid.rules
-# Allow logged-in desktop users access to /dev/uhid for virtual FIDO2 USB token emulation
-KERNEL=="uhid", TAG+="uaccess"
+# Allow logged-in desktop users access to /dev/uhid for virtual FIDO2 USB token emulation.
+#
+# NOTE: TAG+="uaccess" is what makes this work: systemd-logind adds a per-user
+# ACL for the user on the local seat. MODE/GROUP only take effect if you drop
+# the uaccess tag (see 70-uhid-strict.rules). Access cannot be restricted
+# below "the logged-in desktop user" while the browser, which runs as that
+# user, has to reach the token. On multi-user machines prefer the strict rule.
+KERNEL=="uhid", TAG+="uaccess", MODE="0660", GROUP="fido"

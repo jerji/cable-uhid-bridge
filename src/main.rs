@@ -41,14 +41,23 @@ async fn main() -> Result<()> {
                 i += 1;
             }
         }
+
+        // Preferred channel for the QR URL: environment variable, so the caBLE
+        // session handle never appears in /proc/<pid>/cmdline / `ps aux`.
+        if url.is_empty() {
+            url = std::env::var("CABLE_QR_URL").unwrap_or_default();
+        }
         return ui::run_ui(rp, url, is_registration);
     }
 
-    // Default: Daemon mode
+    // Default: Daemon mode.
+    // Default to WARN, not INFO: the caBLE layer logs request metadata
+    // (rpId, clientDataHash, credential IDs) which must not land in journald
+    // unless the operator explicitly opts in via RUST_LOG.
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
+                .with_default_directive(LevelFilter::WARN.into())
                 .from_env_lossy(),
         )
         .compact()
@@ -168,12 +177,9 @@ async fn handle_cable_transaction(
             );
         } else {
             println!(
-                "   Searching allowList ({} credential(s) requested):",
+                "   Searching allowList ({} credential(s) requested)",
                 assertion_req.allow_list.len()
             );
-            for (idx, cred_id) in assertion_req.allow_list.iter().enumerate() {
-                println!("     [{}] {}", idx + 1, hex::encode(cred_id));
-            }
         }
         println!("   Launching caBLE v2 (Hybrid Transport) modal with your phone...\n");
     }
@@ -190,6 +196,14 @@ async fn handle_cable_transaction(
 
     let mut last_keepalive = std::time::Instant::now();
 
+    // Bound how long a QR prompt may stay live. Without this, a hostile local
+    // process can trigger a passkey prompt and leave it on screen indefinitely.
+    let qr_timeout = std::env::var("CABLE_QR_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(90);
+    let tx_started = std::time::Instant::now();
+
     let tx_result = loop {
         if cable_task.is_finished() {
             match cable_task.await {
@@ -203,6 +217,15 @@ async fn handle_cable_transaction(
 
         if bridge_ui.is_cancelled() {
             info!("caBLE session cancelled by user via UI modal");
+            cable_task.abort();
+            break TransactionResult::UserCancelled;
+        }
+
+        if tx_started.elapsed() >= std::time::Duration::from_secs(qr_timeout) {
+            info!(
+                "caBLE transaction timed out after {}s without phone approval",
+                qr_timeout
+            );
             cable_task.abort();
             break TransactionResult::UserCancelled;
         }
@@ -264,23 +287,25 @@ async fn handle_cable_transaction(
                         "Received created credential ({} bytes) from phone!",
                         resp.len()
                     );
-                    let cred_id_hex = extract_make_credential_id(&resp)
-                        .map(|id| hex::encode(&id))
-                        .unwrap_or_else(|| "unknown".to_string());
                     println!("\n✅ Successfully registered new passkey with phone!");
-                    println!("   Created Credential ID: {}", cred_id_hex);
-                    println!("   Relying Party: {}\n", rp_id);
                 } else {
                     info!(
                         "Received signed CTAP assertion ({} bytes) from phone!",
                         resp.len()
                     );
-                    let cred_id_hex = extract_assertion_credential_id(&resp)
-                        .map(|id| hex::encode(&id))
-                        .unwrap_or_else(|| "unspecified (discoverable passkey)".to_string());
                     println!("\n✅ Successfully authenticated with phone passkey!");
-                    println!("   Authenticated Credential ID: {}", cred_id_hex);
-                    println!("   Relying Party: {}\n", rp_id);
+                }
+                // Credential IDs and rpId are deliberately not written to stdout:
+                // with a user service, stdout is captured by journald. They remain
+                // available for opt-in debugging via RUST_LOG=debug.
+                debug!("Transaction completed for relying party: {}", rp_id);
+                let new_credential_id = if is_make_cred {
+                    extract_make_credential_id(&resp).map(hex::encode)
+                } else {
+                    None
+                };
+                if let Some(cred_id) = new_credential_id {
+                    debug!("New credential ID: {}", cred_id);
                 }
                 if let Err(e) = token.send_cbor_response(channel, CTAP2_OK, &resp) {
                     error!("Failed to send response back to browser: {:?}", e);

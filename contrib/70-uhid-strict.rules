@@ -1,0 +1,14 @@
+# /etc/udev/rules.d/70-uhid.rules  (strict variant)
+#
+# Drops TAG+="uaccess" and allows only members of the `fido` group to open the
+# virtual token. Use this if you want to control which accounts may run a
+# virtual FIDO2 token at all (e.g. a multi-user machine or a kiosk).
+#
+# Requirements:
+#   sudo groupadd -f fido
+#   sudo usermod -aG fido "$USER"     # then log out and back in
+#
+# The bridge daemon and any tool that talks to /dev/uhid must run as a member
+# of `fido`. The browser does not open /dev/uhid directly, so browsing is
+# unaffected.
+KERNEL=="uhid", MODE="0660", GROUP="fido"
